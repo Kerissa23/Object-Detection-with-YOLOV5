@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>YOLOv5 Real-Time Object Detection</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 YOLOv5 Real-Time Object Detection</h1>
+
+        <div class="controls">
+            <button id="start-button" onclick="startDetection()">▶ Start</button>
+            <button id="stop-button" onclick="stopDetection()">■ Stop</button>
+        </div>
+
+        <div class="unit-toggle">
+            <label for="unit-select">Show Distance in:</label>
+            <select id="unit-select" onchange="updateUnit()">
+                <option value="m">Meters</option>
+                <option value="ft">Feet & Inches</option>
+            </select>
+        </div>
+
+        <p style="font-size: 0.9em; color: #666;">
+            *Distance is calculated based on an assumed average object height of <strong>170 cm</strong>.
+        </p>
+
+        <div class="video-wrapper">
+            <img id="video" src="" alt="Live Stream">
+        </div>
+
+        <div id="detections" class="detections">
+            <h3>Detected Objects:</h3>
+            <ul id="detection-list"></ul>
+        </div>
+    </div>
+
+    <script>
+        let interval;
+        let unit = "m"; // Default unit is meters
+
+        function startDetection() {
+            fetch('/start')
+                .then(() => {
+                    document.getElementById("video").src = "/video";
+                    interval = setInterval(fetchDetections, 1000);
+                });
+        }
+
+        function stopDetection() {
+            fetch('/stop')
+                .then(() => {
+                    document.getElementById("video").src = "";
+                    clearInterval(interval);
+                    document.getElementById("detection-list").innerHTML = "";
+                });
+        }
+
+        function updateUnit() {
+            unit = document.getElementById("unit-select").value;
+        }
+
+        function convertToFeetAndInches(meters) {
+            const totalInches = meters * 39.3701;
+            const feet = Math.floor(totalInches / 12);
+            const inches = Math.round(totalInches % 12);
+            return `${feet} ft ${inches} in`;
+        }
+
+        function fetchDetections() {
+            fetch('/detections')
+                .then(res => res.json())
+                .then(data => {
+                    const list = document.getElementById("detection-list");
+                    list.innerHTML = "";
+                    if (data.length === 0) {
+                        list.innerHTML = "<li>No objects detected</li>";
+                    } else {
+                        data.forEach(d => {
+                            const name = d.name || "Unknown";
+                            const conf = (typeof d.conf === "number" && !isNaN(d.conf)) ? (d.conf * 100).toFixed(1) : "N/A";
+                            const x = Math.round(d.xmin || 0);
+                            const y = Math.round(d.ymin || 0);
+
+                            let dist = "N/A";
+                            if (d.distance_m !== undefined) {
+                                dist = unit === "m"
+                                    ? `${d.distance_m.toFixed(2)} m`
+                                    : convertToFeetAndInches(d.distance_m);
+                            }
+
+                            list.innerHTML += `<li><strong>${name}</strong> — ${conf}% at [${x}, ${y}], Distance: ${dist}</li>`;
+                        });
+                    }
+                })
+                .catch(err => {
+                    console.error("Detection error:", err);
+                });
+        }
+    </script>
+</body>
+</html>
