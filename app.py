@@ -1,28 +1,30 @@
 from flask import Flask, render_template, Response, jsonify
 import torch
 import cv2
+from ultralytics import YOLO
 import numpy as np
 
 app = Flask(__name__)
 
-# Load model
-model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
+# Load YOLOv8s model
+model = YOLO('yolov8s.pt')
+
+# Initialize camera
 camera = cv2.VideoCapture(0)
 running = False
 
-# Load MiDaS
-midas = torch.hub.load("intel-isl/MiDaS", "MiDaS_small")  # or "DPT_Large" for better accuracy
+# Load MiDaS model for depth estimation
+midas = torch.hub.load("intel-isl/MiDaS", "MiDaS_small")
 midas.eval()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 midas.to(device)
 
-# Load transforms
+# Load MiDaS transforms
 midas_transforms = torch.hub.load("intel-isl/MiDaS", "transforms").small_transform
 
 # Distance estimation function
 def estimate_distance(frame, ymin, ymax, xmin, xmax):
     try:
-        # Prepare input
         input_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         input_tensor = midas_transforms(input_image).to(device)
 
@@ -43,14 +45,10 @@ def estimate_distance(frame, ymin, ymax, xmin, xmax):
 
         mean_depth = np.mean(roi)
 
-        # ---- Real-world scaling using reference object ----
+        # Real-world distance estimation
         pixel_height = ymax - ymin
-        assumed_real_height_m = 1.7  # Assumed height of person in meters
-
-        # Focal length approximation (optional tuning for better scale)
-        focal_length_px = 1.2 * frame.shape[0]  # Simple heuristic
-
-        # Use pinhole camera model:  D = (H * f) / h
+        assumed_real_height_m = 1.7  # meters
+        focal_length_px = 1.2 * frame.shape[0]
         distance_m = (assumed_real_height_m * focal_length_px) / (pixel_height + 1e-6)
 
         return round(float(distance_m), 2)
@@ -58,7 +56,6 @@ def estimate_distance(frame, ymin, ymax, xmin, xmax):
     except Exception as e:
         print("Depth Estimation Error:", e)
         return None
-
 
 # Frame generator
 def generate_frames():
@@ -68,7 +65,7 @@ def generate_frames():
         if not success:
             break
         results = model(frame)
-        annotated_frame = results.render()[0]
+        annotated_frame = results[0].plot()
         _, buffer = cv2.imencode('.jpg', annotated_frame)
         frame_bytes = buffer.tobytes()
         yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
@@ -104,21 +101,21 @@ def detections():
         return jsonify([])
 
     results = model(frame)
-    dets_df = results.pandas().xyxy[0]  # YOLOv5 or YOLOv8 DataFrame output
+    dets = results[0].boxes
 
     detections = []
-    for _, row in dets_df.iterrows():
-        xmin = float(row.get("xmin", 0))
-        ymin = float(row.get("ymin", 0))
-        xmax = float(row.get("xmax", 0))
-        ymax = float(row.get("ymax", 0))
+    for box in dets:
+        xmin, ymin, xmax, ymax = box.xyxy[0].cpu().numpy()
+        conf = float(box.conf[0])
+        cls = int(box.cls[0])
+        name = model.names[cls]
 
-        # Use MiDaS-based depth estimation
+        # Estimate distance using MiDaS
         distance = estimate_distance(frame, ymin, ymax, xmin, xmax)
 
         detection = {
-            "name": row.get("name", "unknown"),
-            "conf": float(row.get("confidence", 0)),
+            "name": name,
+            "conf": conf,
             "xmin": int(xmin),
             "ymin": int(ymin),
             "distance_m": distance if distance is not None else "N/A"
@@ -126,8 +123,6 @@ def detections():
         detections.append(detection)
 
     return jsonify(detections)
-
-
 
 if __name__ == '__main__':
     app.run(debug=False)

@@ -1,48 +1,44 @@
-import torch
 import cv2
-import numpy as np
+from ultralytics import YOLO
 
-# Load YOLOv5 model
-model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
 
-# Set model to eval mode and device
-model.eval()
+model = YOLO('yolov8s.pt')  # Use 'yolov8n.pt' (nano) for speed, 'yolov8s.pt' for higher accuracy
 
-# Open the webcam
-cap = cv2.VideoCapture(0)  # Use 0 for default camera
+# Open webcam
+cap = cv2.VideoCapture(0)
 
 if not cap.isOpened():
     print("Error: Could not open webcam.")
     exit()
 
 while True:
+    # Read frame from webcam
     ret, frame = cap.read()
     if not ret:
+        print("Failed to grab frame")
         break
 
-    # Convert frame to RGB
-    img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    # Perform object detection
+    results = model(frame)
 
-    # Perform detection
-    results = model(img_rgb)
+    # Visualize detection results
+    for result in results:
+        boxes = result.boxes
+        for box in boxes:
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            conf = box.conf[0]
+            cls = int(box.cls[0])
+            label = f"{model.names[cls]} {conf:.2f}"
 
-    # Parse results
-    detections = results.xyxy[0]  # (x1, y1, x2, y2, confidence, class)
+            # Draw bounding box and label
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(frame, label, (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-    for *box, conf, cls in detections:
-        x1, y1, x2, y2 = map(int, box)
-        label = model.names[int(cls)]
-        confidence = float(conf)
+    # Display output
+    cv2.imshow('YOLOv8 Real-Time Object Detection', frame)
 
-        # Draw bounding box
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.putText(frame, f'{label} {confidence:.2f}', (x1, y1 - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-
-    # Show the frame
-    cv2.imshow('Real-Time Object Detection', frame)
-
-    # Break on 'q' key
+    # Break loop when 'q' is pressed
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
